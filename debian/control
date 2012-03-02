@@ -1,0 +1,17 @@
+Source: tbxsos-utils
+Section: teambox-internal
+Priority: optional
+Maintainer: Teambox Packages
+Build-Depends: debhelper (>= 5), python
+Build-Depends-Indep: python-support (>= 0.4)
+Standards-Version: 3.7.2
+XS-Python-Version: all
+
+Package: tbxsos-utils
+Architecture: any
+Depends: ${python:Depends}, kmod
+XB-Python-Version: ${python:Versions}
+Description: Misc. utilities for Teambox Sign-On Server
+ Misc utilities for TBXSOS:
+  - kpslogin
+  - kosquery

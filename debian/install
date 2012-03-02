@@ -1,0 +1,5 @@
+K3P/* /usr/share/python-support/K3P/
+KNP/* /usr/share/python-support/KNP/
+bin/kpslogin usr/bin
+bin/kosquery usr/bin
+bin/pkgmail  usr/bin

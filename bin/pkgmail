@@ -1,0 +1,244 @@
+#!/usr/bin/python
+#
+# This is a very basic program that provides a basic way to retrive the result
+# of a packaging request.
+#
+# It takes the following arguments as input:
+#  server     M,NE  KPS address
+#  port       M,NE  KPS port
+#  username   M,NE  KPS username
+#  password   M,NE  KPS password
+#  from_name  M,NE  Sender full name
+#  from_addr  M,NE  Sender email address
+#  to         M,NE  TO email addresses (anything separated by spaces)
+#  cc         M     CC email addresses (anything separated by spaces)
+#  subject    M     Subject of the mail to package
+#  pkg_type   M,NE  Packaging type demanded
+#  pod_addr         PoD return address
+#
+#  Legend: M = Mandatory, NE = Non-empty
+#
+# The parameters needs to be specified on the process standard input
+# with the parameter key as the first word on the line followed by the
+# parameter value
+#
+# The program stop reading parameters once it finds a single 'end'
+# word and then reads the message body on the standard input until the
+# end of the input.
+#
+# THE FOLLOWING FEATURES ARE MISSING (but would be interesting)
+#
+# - Packaging with encryption passwords: the program will refuse to
+#   encrypt if it cannot find an email address
+# - Login with login token: would be trivial
+# - Enforce properly formatted email addresses: not really useful
+#   since the server will fail to find invalid addresses
+# - OTUTs: useful for testing scenarios
+# - Packaging of HTML: only text is supported right now.
+# - KOS server override: would be trivial
+#
+# THE FOLLOWING FEATURES WERE REMOVED IN THE PYTHON PORT:
+#
+# - Directly mailing the result: removed as no longer needed
+# - Formatting with templates: removed as handled elsewhere
+# - Spoof keys: not useful anymore
+# - Signed message formatting: not useful anymore
+# - Old-style license packaging: removed from KPS
+
+import sys, KNP
+
+class Fail(Exception): pass
+
+def read_stdin():
+    """
+    Read the program parameters from the standard input.
+    """
+    params = {}
+    while True:
+        line = sys.stdin.readline()
+
+        # Break at EOF
+        if line == "":
+            break
+        s = line.split(" ", 1)
+        if len(s) == 1:
+            s.append("")
+        (key, value) = s
+        key = key.strip()
+        value = value.strip()
+
+        # Break at end.
+        if key == "end":
+            break
+        else:
+            params[key] = value
+
+    # Read the message body.
+    while line != "":
+        line = sys.stdin.readline()
+        if not "body" in params:
+            params["body"] = ""
+        params["body"] += line
+
+    return params
+
+def check_args(params):
+    """
+    Check the provided parameters for mandatory and non-empty parameters
+    """
+    required_parameters = ["server", "port", "from_name", "from_addr", "to",
+                           "cc", "subject", "username", "password", "pkg_type"]
+    non_empty_params = ["server", "port", "to", "from_addr", "pkg_type", "username", "password"]
+
+    # Check parameters that are required.
+    for p in required_parameters:
+        if not p in params:
+            raise Fail("'%s' parameter is required" % p)
+
+    # Check parameters that need to be non-empty.
+    for p in non_empty_params:
+        if not p in params:
+            raise Fail("'%s' parameter must not be empty" % p)
+
+    # Check for the presence of a message body.
+    if not "body" in params:
+        raise Fail("no body provided after 'end'")
+
+    # Conveniently convert some parameters that needs to be configured
+    # as integers.
+    params["pkg_type"] = int(params["pkg_type"])
+    params["port"] = int(params["port"])
+
+def encryption_keys(addrs):
+    """
+    Fetch encryption keys.
+    """
+    knp = KNP.KNPConnection("4.1", "kos.teambox.co", 443)
+
+    # Prepare the encryption key request.
+    enc_req = KNP.KNPGetEncKeyRequest()
+    enc_req.nb_address = len(addrs)
+    enc_req.address_array = addrs
+
+    try:
+        # Fetch the encryption keys.
+        knp.connect()
+        knp.write_structure(enc_req)
+        enc_res = knp.read_header()
+
+        keys = []
+        if enc_res.typ == KNP.KNP_RES_GET_ENC_KEY:
+            enc_res = knp.read_structure(enc_res.size, KNP.KNPGetEncKeyResponse)
+        elif enc_res.typ == KNP.KNP_RES_FAIL:
+            raise Fail("encryption key request failed")
+
+        return enc_res.key_array
+
+    finally:
+        if knp: knp.close()
+
+def recipients(to, cc):
+    """
+    Fetch the encryption keys for the packaging recipients.
+    """
+    sto = to.split(" ")
+    if cc != "":
+        scc = cc.split(" ")
+    else:
+        scc = []
+
+    srecips = sto + scc
+    skeys = encryption_keys(srecips)
+    recips = []
+
+    for i in range(0, len(skeys)):
+        if skeys[i] == "":
+            raise Fail("cannot find encryption key for user %s" % srecips[i])
+        else:
+            nr = KNP.KNPPkgRecipient()
+            nr.addr = srecips[i]
+            nr.enc_type = KNP.KNP_PKG_ENC_KEY
+            nr.enc_key_data = skeys[i]
+            recips.append(nr)
+    return recips
+
+def package_message(params):
+    """
+    Call the KPS to package the message.
+    """
+
+    # Prepare the login request.
+    login_req = KNP.KNPLoginUserRequest()
+    login_req.user_name = params["username"]
+    login_req.user_secret = params["password"]
+    login_req.secret_is_pwd = True
+
+    # Prepare the packaging request.
+    pkg_req = KNP.KNPPackageMailRequest()
+    pkg_req.pkg_type = params["pkg_type"]
+    pkg_req.lang = 0
+    pkg_req.to_field = params["to"]
+    pkg_req.cc_field = params["cc"]
+    pkg_req.nb_pwd = 0
+    pkg_req.pwd_array = []
+    pkg_req.from_name = params["from_name"]
+    pkg_req.from_addr = params["from_addr"]
+    pkg_req.subject = params["subject"]
+    pkg_req.body_type = KNP.KNP_PKG_BODY_TEXT
+    pkg_req.body_text = params["body"]
+    pkg_req.body_html = ""
+    pkg_req.nb_attach = 0
+    pkg_req.attach_array = []
+    pkg_req.pod_addr = params["pod_addr"]
+
+    # Fetch all the encryption key that is necessary.
+    if params["pkg_type"] > 0:
+        recips = recipients(params["to"], params["cc"])
+        pkg_req.nb_recipient = len(recips)
+        pkg_req.recipient_array = recips
+    else:
+        pkg_req.nb_recipient = 0
+        pkg_req.recipient_array = []
+
+    try:
+        knp = KNP.KNPConnection("4.1", params["server"], params["port"])
+        knp.connect()
+
+        knp.write_structure(login_req)
+        login_res = knp.read_header()
+
+        # Perform login.
+        if login_res.typ == KNP.KNP_RES_LOGIN_OK:
+            knp.read_structure(login_res.size, KNP.KNPLoginOkResponse)
+        else:
+            raise Fail("KPS login failed")
+
+        # Package the mail
+        knp.write_structure(pkg_req)
+        pkg_res = knp.read_header()
+
+        if pkg_res.typ == KNP.KNP_RES_PACKAGE_MAIL:
+            pkg_ret = knp.read_structure(pkg_res.size, KNP.KNPPackageMailResponse)
+            return pkg_ret.pkg_output
+        else:
+            raise Fail("Packaging failed")
+
+    finally:
+        if knp: knp.close()
+
+if __name__ == "__main__":
+    # Read the packaging options.
+    params = read_stdin()
+
+    # Make sure we have everything we need to proceed.
+    check_args(params)
+
+    # Call the KPS.
+    try:
+        packaged_message = package_message(params)
+    except Fail, ex:
+        sys.stderr.write(ex.message + "\n")
+        sys.exit(1)
+    else:
+        sys.stdout.write(packaged_message + "\n")
+        sys.exit(0)

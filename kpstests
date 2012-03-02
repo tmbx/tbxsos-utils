@@ -1,0 +1,159 @@
+#!/usr/bin/python
+
+import sys, K3P, ProfK, testutils
+from ConfigParser import *
+from unittest import *
+
+kmod = None
+msg = None
+
+class K3PBasicLoginTest(TestCase):
+    """
+    Login test on normal KPS.
+    """
+    def test_login(self):
+        try:
+            kmod.login_test()
+        except K3P.PluginException, ex:
+            self.fail(ex.message)
+
+class K3PSignatureTest(TestCase):
+    """
+    Signature packaging test on normal KPS.
+    """
+    def test_signature(self):
+        try:
+            kmod.set_server_info()
+            msg_enc = kmod.sign_mail(msg)
+
+            if msg_enc.text_body:
+                self.assert_(len(msg_enc.text_body) > 0,
+                             "text body signature returned nothing")
+            if msg_enc.html_body:
+                self.assert_(len(msg_enc.html_body) > 0,
+                             "HTML body signature returned nothing")
+
+        except K3P.PluginException, ex:
+            self.fail(ex.message)
+
+class K3PEncryptionTest(TestCase):
+    """
+    Encryption packaging test on normal KPS.
+    """
+    def test_packaging(self):
+        try:
+            kmod.set_server_info()
+            msg_enc = kmod.encrypt_mail(msg)
+
+            if msg_enc.text_body:
+                self.assert_(len(msg_enc.text_body) > 0,
+                             "text body encryption returned nothing")
+            if msg_enc.html_body:
+                self.assert_(len(msg_enc.html_body) > 0,
+                             "HTML body encryption returned nothing")
+
+        except K3P.PluginException, ex:
+            self.fail(ex.message)
+
+class K3PPoDTest(TestCase):
+    """
+    PoD packaging test on normal KPS.
+    """
+    def test_packaging(self):
+        try:
+            kmod.set_server_info()
+            msg_enc = kmod.pod_mail(msg)
+
+            if msg_enc.text_body:
+                self.assert_(len(msg_enc.text_body) > 0,
+                             "text body encryption returned nothing")
+            if msg_enc.html_body:
+                self.assert_(len(msg_enc.html_body) > 0,
+                             "HTML body encryption returned nothing")
+
+        except K3P.PluginException, ex:
+            self.fail(ex.message)
+
+class K3PPoDEncryptionTest(TestCase):
+    """
+    Full service packaging test on normal KPS.
+    """
+    def test_packaging(self):
+        try:
+            kmod.set_server_info()
+            msg_enc = kmod.encrypt_and_pod_mail(msg)
+
+            if msg_enc.text_body:
+                self.assert_(len(msg_enc.text_body) > 0,
+                             "text body encryption returned nothing")
+            if msg_enc.html_body:
+                self.assert_(len(msg_enc.html_body) > 0,
+                             "HTML body encryption returned nothing")
+
+        except K3P.PluginException, ex:
+            self.fail(ex.message)
+
+class K3PSignatureCheckTest(TestCase):
+    """
+    Single signature checking.
+    """
+    def test_signature(self):
+        try:
+            kmod.set_server_info()
+            msg_enc = kmod.sign_mail(msg)
+
+            res = kmod.eval_mail(msg_enc)
+
+            if msg_enc.text_body:
+                self.assert_(res.text_body, "Invalid text body")
+            if msg_enc.html_body:
+                self.assert_(res.html_body, "Invalid HTML body")
+
+        except K3P.PluginException, ex:
+            self.fail(ex.message)
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.stderr.write("Usage: kpstest [test configuration .ini]\n")
+        sys.exit(2)
+
+    # Open the configuration file for the KPS test.
+    test_cfg = ConfigParser()
+    test_cfg_file = open(sys.argv[1], "r")
+    test_cfg.readfp(test_cfg_file)
+    test_cfg_file.close()
+
+    kmod = K3P.Plugin(test_cfg.get("kmod", "kmod"), kmod_timeout = test_cfg.getint("kmod", "timeout"))
+
+    # Setup the basic parameters from the configuration file.
+    kmod.full_name = test_cfg.get("kps", "full_name")
+    kmod.pod_addr = test_cfg.get("kps", "pod_addr")
+    kmod.username = test_cfg.get("kps", "username")
+    kmod.password = test_cfg.get("kps", "password")
+    kmod.kps_host = test_cfg.get("kps", "host")
+    kmod.kps_port = int(test_cfg.get("kps", "port"))
+
+    msg = testutils.msg_from_cfg(test_cfg, "message")
+
+    kmod.start()
+
+    tl = TestLoader()
+    
+    s1 = tl.loadTestsFromTestCase(K3PBasicLoginTest)
+    s2 = tl.loadTestsFromTestCase(K3PSignatureTest)
+    s3 = tl.loadTestsFromTestCase(K3PEncryptionTest)
+    s4 = tl.loadTestsFromTestCase(K3PPoDTest)
+    s5 = tl.loadTestsFromTestCase(K3PPoDEncryptionTest)
+    s6 = tl.loadTestsFromTestCase(K3PSignatureCheckTest)
+    
+    chk = ProfK.Checker()
+
+    for t in [s1, s2, s3, s4, s5, s6]: t(chk)
+
+    kmod.stop()
+
+    r = ProfK.NegativeTestReporter(chk, sys.stdout)
+    r.title = test_cfg.get("report", "title")
+    r.report()
+
+    sys.exit(0)

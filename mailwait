@@ -1,0 +1,10 @@
+#!/usr/bin/python
+#
+# Calls mailwait.mailwait_receive()
+
+from mailwait import mailwait_receive
+import sys
+
+if __name__ == "__main__":
+    mailwait_receive()
+    sys.exit(0)

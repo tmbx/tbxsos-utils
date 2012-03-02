@@ -1,0 +1,12 @@
+#!/bin/bash
+#
+# Transfer all the important files to avocado.
+
+# Avocado (209.20.77.20 = external site), kopi is a machine in our
+# internal network.
+SITES="209.20.77.20 kopi"
+FILES="ProfK/*.pyc K3P/*.pyc KNP/*.pyc *.pyc otutcycle ini/*.stock kpstests"
+
+for s in $SITES; do
+    rsync --rsh=ssh -CavzrdR $FILES $s:~/
+done

@@ -1,0 +1,7 @@
+#!/usr/bin/python
+
+import unittest, sys, K3P, ProfK
+from ConfigParser import *
+
+kmod = None
+msg = None

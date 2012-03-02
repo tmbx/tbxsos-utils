@@ -1,0 +1,135 @@
+#!/usr/bin/python
+
+import K3P, KNP, getopt, sys
+
+class LoginParameters:
+    username = None
+    password = None
+    hostname = None
+    port = None
+    debug = False
+
+def kmod_login(login_params):
+    """
+    Do a test login using KMOD, this is very straightforward.
+    """
+
+    kmod = K3P.Plugin("/usr/bin/kmod")
+
+    kmod.username = login_params.username
+    kmod.password = login_params.password
+    kmod.kps_host = login_params.hostname
+    kmod.kps_port = login_params.port
+
+    result = False
+    try:
+        # Simply start KMOD and do a login test.
+        kmod.start()
+        kmod.login_test()
+        result = True
+    except Exception, ex:
+        if login_params.debug:
+            raise
+        else:
+            sys.stderr.write("Error: " + str(ex) + "\n")
+            result = False
+    finally:
+        kmod.stop()
+
+    return result
+
+def knp_login(login_params):
+    """
+    Do a test login using the KNP protocol.
+    """
+
+    knp = KNP.KNPConnection("4.1", login_params.hostname, login_params.port)
+    knp.connect()
+
+    req = KNP.KNPLoginRequest()
+    req.user_name = login_params.username
+    req.user_secret = login_params.password
+    req.secret_is_pwd = True
+
+    result = False
+    try:
+        knp.write_structure(req)
+        res = knp.read_header()
+
+        # Check the result and read the resulting structure.
+        if res.typ == KNP.KNP_RES_LOGIN_OK:
+            result = True
+            knp.read_structure(KNP.KNPLoginOkResponse())
+        else:
+            knp.read_structure(KNP.KNPFatalError())
+    except Exception, ex:
+        if login_params.debug:
+            raise
+        else:
+            sys.stderr.write("Error: " + str(ex) + "\n")
+            result = False
+    finally:
+        knp.close()
+
+    return result
+
+def usage():
+    sys.stderr.write("Command line arguments for kpslogin:\n")
+    sys.stderr.write("kpslogin -u <username> -w <password> [-h <hostname>] [-p <port>]\n")
+    sys.stderr.write("\t-u <username>\t username to login with\n")
+    sys.stderr.write("\t-h <hostname>\t host to connect to\n")
+    sys.stderr.write("\t-p <port>\t port number to use to connect to the machine\n")
+    sys.stderr.write("\t-w <password>\t password\n")
+    sys.stderr.write("\t-K \t\tUse KNP\n")
+
+if __name__ == "__main__":
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "u:w:h:p:KD")
+    except getopt.GetoptError, err:
+        sys.stderr.write(str(err) + "\n")
+        usage()
+        exit(1)
+
+    kmod_mode = True
+    login_params = LoginParameters()
+
+    for o, a in opts:
+        if o == "-u":
+            login_params.username = a
+        elif o == "-w":
+            login_params.password = a
+        elif o == "-h":
+            login_params.hostname = a
+        elif o == "-K":
+            kmod_mode = False
+        elif o == "-D":
+            login_params.debug = True
+        elif o == "-p":
+            try:
+                login_params.port = int(a)
+            except:
+                sys.stderr.write("Cannot convert " + a + " to integer.")
+
+    if not login_params.username or not login_params.password:
+        sys.stderr.write("Username (-u) and password (-w) are mandatory.\n")
+        exit(1)
+
+    if not login_params.port:
+        sys.stderr.write("No target port specified, using 443 as default.\n")
+        login_params.port = 443
+
+    if not login_params.hostname:
+        sys.stderr.write("No hostname specified, using localhost as default.\n")
+        login_params.hostname = "localhost"
+
+    if kmod_mode:
+        result = kmod_login(login_params)
+    else:
+        result = knp_login(login_params)
+
+    if result:
+        print "OK"
+        sys.exit(0)
+    else:
+        print "FAILED"
+        sys.exit(1)

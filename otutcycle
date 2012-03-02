@@ -1,0 +1,240 @@
+#!/usr/bin/python
+#
+# This is rather odly implemented as a set of test case, which are
+# described invidually.
+
+import unittest, sys, K3P, ProfK
+from ConfigParser import *
+from testutils import *
+from unittest import *
+
+kmod = None
+kmodnm = None
+
+msg = None        # Message from member, as written in the 'mail client'
+msgnm = None      # Message from non-member, as written in the 'mail client'
+
+msg_enc = None    # Message from member, encrypted to non-member.
+msg_dec = None    # Message from member, decrypted by non-member or member.
+msgnm_enc = None  # Message from non-member, to be decrypted by member
+msgnm_dec = None  # Message from non-member, as decrypted by member
+
+destdir = None
+
+cfg = None        # Configuration for the test.
+
+# All those test are in correct order to be executed.
+
+class MemberEncryptWithOTUT(KMODTestCase):
+    """
+    Member encryption of a mail to a non-member account.
+    """
+
+    def __init__(self, methodName):
+        global kmod, destdir
+        KMODTestCase.__init__(self, methodName, kmod, destdir)
+
+    def test_encrypt(self):
+        global kmod, msg_enc
+
+        try:
+            kmod.start()
+            kmod.set_server_info()
+
+            # Encryption proper.
+            msg_enc = kmod.encrypt_mail(msg)
+
+            # Basic assertions about the message.
+            self.assert_(len(msg_enc.text_body) > 0, 'no encryped text body')
+            self.assert_(len(msg_enc.html_body) == 0,
+                         'HTML body present in encrypted content, but not in original message')
+
+            # Stop and reset kmod, it will need to be restarted in the
+            # next test.
+            kmod.reset()
+
+        except K3P.PluginException, ex:
+            self.fail(ex.message)
+
+class MemberDecryptFromMember(KMODTestCase):
+    """
+    Member decryption of mail sent by a member.
+    """
+    def __init__(self, methodName):
+        global kmod, destdir
+        KMODTestCase.__init__(self, methodName, kmod, destdir)
+
+    def test_decrypt(self):
+        global kmod, msg_enc
+
+        try:
+            self.assert_(msg_enc != None, 'no message to decrypt')
+            
+            kmod.start()
+            kmod.set_server_info()
+
+            # Evaluate the state of the message.
+            msg_enc_eval = kmod.eval_mail(msg_enc)
+
+            # Assert the of the good state of the message before
+            # continuing.  This doesn't need to be exhaustive as we
+            # are not testing KMOD itself but the good working of the
+            # online services.
+            self.assert_(msg_enc_eval.is_valid, msg_enc_eval.signature_msg)
+            self.assert_(msg_enc_eval.encryption_status != K3P.KMO_DECRYPTION_STATUS_ERROR,
+                         msg_enc_eval.decryption_err_msg)
+            self.assert_(msg_enc_eval.text_body, "text body has changed")
+
+            # Try to actually decrypt the message.
+            msg_dec = kmod.process_mail(msg_enc)
+
+            self.assert_(msg_dec.text_body == msg.text_body, "non-matching decrypted message")
+            
+            # Reset kmod.
+            kmod.stop()
+
+        except K3P.PluginException, ex:
+            self.fail(ex.message)
+
+class NonMemberDecryptWithOTUT(KMODTestCase):
+    """
+    Non-member decryption of mail encrypted with OTUT.
+    """
+
+    def __init__(self, methodName):
+        global kmod, destdir
+        KMODTestCase.__init__(self, methodName, kmodnm, destdir)
+
+    def test_decrypt(self):
+        global kmodnm, msg_enc, msg_dec
+
+        try:
+            self.assert_(msg_enc != None, 'no message to decrypt')
+            
+            kmodnm.start()
+
+            # Evaluate the mail start.
+            msg_enc_eval = kmodnm.eval_mail(msg_enc)
+
+            # Assert the of the good state of the message before
+            # continuing.  This doesn't need to be exhaustive as we
+            # are not testing KMOD itself but the good working of the
+            # online services.
+            self.assert_(msg_enc_eval.is_valid, msg_enc_eval.signature_msg)
+            self.assert_(msg_enc_eval.encryption_status != K3P.KMO_DECRYPTION_STATUS_ERROR,
+                         msg_enc_eval.decryption_err_msg)
+            self.assert_(msg_enc_eval.text_body, "text body has changed")
+
+            # Try to actually decrypt the message.
+            msg_dec = kmodnm.process_mail(msg_enc, cfg.get("nonmember", "encrypt-password"))
+
+            self.assert_(msg_dec.otut and msg_dec.otut.valid, "invalid OTUT with the mail")
+            self.assert_(msg_dec.text_body == msg.text_body, "non-matching decrypted message")
+
+            # Stop kmod.  This is not a reset because we still need
+            # its database.
+            kmodnm.stop()
+                
+        except K3P.PluginException, ex:
+            self.fail(ex.message)
+
+class NonMemberEncryptWithOTUT(unittest.TestCase):
+    """
+    Member encryption of mail using OTUT.
+    """
+
+    def test_encrypt(self):
+        global kmodnm, msgnm_enc
+        
+        try:
+            self.assert_(msg_dec != None, 'no message from which to pick the OTUT')
+            
+            kmodnm.start()
+
+            # Set the OTUT to use, then encrypt the mail.
+            msgnm.otut = msg_dec.otut
+            msgnm_enc = kmodnm.encrypt_mail(msgnm)
+
+            # Assert the general good state of the result.
+            self.assert_(len(msgnm_enc.text_body) > 0, 'no encrypted text body')
+
+            # Reset KMOD.  We don't need its database anymore.
+            kmodnm.reset()
+            
+        except K3P.PluginException, ex:
+            self.fail(ex.message)    
+
+class MemberDecryptWithOTUT(unittest.TestCase):
+    """
+    Member decrypt of mail encrypted with OTUT.
+    """
+
+    def test_decrypt(self):
+        global kmod, msgnm_enc, msgnm_dec
+
+        try:
+            self.assert_(msgnm_enc != None, 'no message to decrypt')
+            
+            kmod.start()
+            kmod.set_server_info()
+
+            # Evaluate the mail start.
+            msgnm_enc_eval = kmod.eval_mail(msgnm_enc)
+
+            # Assert the of the good state of the message before
+            # continuing.  This doesn't need to be exhaustive as we
+            # are not testing KMOD itself but the good working of the
+            # online services.
+            self.assert_(msgnm_enc_eval.is_valid, msgnm_enc_eval.signature_msg)
+            self.assert_(msgnm_enc_eval.encryption_status != K3P.KMO_DECRYPTION_STATUS_ERROR,
+                         msgnm_enc_eval.decryption_err_msg)
+            self.assert_(msgnm_enc_eval.text_body, "text body has changed")
+
+            # Try to actually decrypt the message.
+            msgnm_dec = kmod.process_mail(msgnm_enc)
+
+            self.assert_(msgnm.text_body == msgnm_dec.text_body,
+                         "non-matching decrypted message")
+            
+            kmod.reset()
+                    
+        except K3P.PluginException, ex:
+            self.fail(ex.message)    
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.stderr.write("Usage: otutcycle [test configuration .ini]\n")
+        sys.exit(2)
+
+    # Open the configuration file for the KPS test.
+    cfg = ConfigParser()
+    cfg_file = open(sys.argv[1], "r")
+    cfg.readfp(cfg_file)
+    cfg_file.close()
+
+    kmod = kmod_from_cfg(cfg, "member")
+    kmodnm = K3P.Plugin(cfg.get("kmod", "kmod"), kmod_timeout = cfg.getint("kmod", "timeout"))
+
+    msg = msg_from_cfg(cfg, "member-message")
+    msgnm = msg_from_cfg(cfg, "nonmember-message")
+
+    destdir = cfg.get("report", "destdir")
+
+    tl = TestLoader()
+
+    # Run all the test here.
+    s1 = tl.loadTestsFromTestCase(MemberEncryptWithOTUT)
+    s2 = tl.loadTestsFromTestCase(MemberDecryptFromMember)
+    s3 = tl.loadTestsFromTestCase(NonMemberDecryptWithOTUT)
+    s4 = tl.loadTestsFromTestCase(NonMemberEncryptWithOTUT)
+    s5 = tl.loadTestsFromTestCase(MemberDecryptWithOTUT)
+    all = TestSuite([s1, s2, s3, s4, s5])
+    
+    chk = ProfK.Checker()
+    chk.run(all)
+
+    r = ProfK.NegativeTestReporter(chk, sys.stdout)
+    r.title = cfg.get("report", "title")
+    r.report()
+
+    sys.exit(0)

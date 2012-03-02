@@ -1,0 +1,191 @@
+#!/usr/bin/python
+
+import sys, KNP, getopt
+
+class ConnectParams:
+    hostname = None
+    port = None
+    working_mode = 0
+    debug = False
+
+def usage():
+    sys.stderr.write("Command line arguments for kosquery:\n")
+    sys.stderr.write("kosquery [-E|-S] [-h hostname] [-p port] [email]*|[key ID]*\n")
+    sys.stderr.write("\t-E\t\tQuery for email address\n")
+    sys.stderr.write("\t-S\t\tQuery for signature keys\n")
+    sys.stderr.write("\t-h <hostname>\tKOS host to connect to\n")
+    sys.stderr.write("\t-p <port>\tport to use to connect\n")
+
+def parse_args(working_mode, args):
+    """
+    Handle the command line arguments.
+    """
+
+    if not args:
+        sys.stderr.write("Nothing to query.\n")
+        sys.exit(1)
+
+    emails = []
+    keyids = []
+    for s in args:
+        # Try to convert the argument to an integer
+        # and assume it's an email address if that fails.
+        try:
+            keyids.append([int(s)])
+        except:
+            emails.append([s])
+
+    # We cannot query for an signature key given an email, so if there is
+    # any email address on the command line we bail out.
+    if working_mode == 2 and len(emails) > 0:
+        sys.stderr.write("Can't query for signature keys using email addresses.\n")
+        sys.exit(1)
+
+    return (emails, keyids)
+
+def query_keyid(knp, connect_params, keyids):
+    """
+    Query for encryption or signature key ID.
+    """
+
+    for k in keyids:
+
+        # Fetch signature keys by ID.
+        if connect_params.working_mode == 1:
+            req = KNP.KNPGetEncKeyByIdRequest()
+            req.key_id = k
+            knp.write_structure(req)
+
+            hdr = knp.read_header()
+
+            if hdr.typ == KNP.KNP_RES_GET_ENC_KEY_BY_ID:
+                sys.stdout.write("%d OK\n" % k)
+                result = True
+            else:
+                sys.stdout.write("%d Missing\n" % k)
+                result = False
+
+        # Fetch encryption keys by ID.
+        elif connect_params.working_mode == 2:
+            req = KNP.KNPGetSignKeyRequest()
+            req.key_id = k
+            knp.write_structure(req)
+
+            hdr = knp.read_header()
+
+            if hdr.typ == KNP.KNP_RES_GET_SIGN_KEY:
+                sys.stdout.write("%d OK\n" % k)
+                result = True
+            else:
+                sys.stdout.write("%d Missing\n" % k)
+                result = False
+
+    return result
+
+def query_email(knp, connect_params, emails):
+    """
+    Search for a key ID matching a certain email address in the online
+    services.
+    """
+
+    result = False
+
+    req = KNP.KNPGetEncKeyRequest()
+    req.nb_address = len(emails)
+    req.address_array = emails
+
+    knp.write_structure(req)
+
+    hdr = knp.read_header()
+
+    if hdr.typ == KNP.KNP_RES_GET_ENC_KEY:
+        res = knp.read_structure(hdr.size, KNP.KNPGetEncKeyResponse)
+
+        # The KNP returns an empty key string if there is no match
+        # for a specific address.
+        for k in range(res.nb_key):
+            if res.key_array[k] != "":
+                sys.stdout.write("%s OK\n" % req.address_array[k])
+            else:
+                sys.stdout.write("%s Missing\n" % req.address_array[k])
+        result = True
+
+    elif hdr.typ == KNP.KNP_RES_FAIL:
+        result = False
+
+    return result
+
+def query_all(connect_params, (emails, keyids)):
+    """
+    Check all the items that were passed on the command line
+    and do the proper query given the kind of key we want to fetch.
+    """
+
+    total = len(emails) + len(keyids)
+    count = 0
+    knp = None
+
+    try:
+        knp = KNP.KNPConnection("4.1", connect_params.hostname, connect_params.port)
+        knp.connect()
+
+        # Query email addresses
+        for e in emails:
+            if query_email(knp, connect_params, e):
+                count = count + 1
+
+        # Query key IDs
+        for k in keyids:
+            if query_keyid(knp, connect_params, k):
+                count = count + 1
+
+        if total == count:
+            return 0
+        elif count < total:
+            return 1
+        elif count == 0:
+            return 2
+
+    except Exception, ex:
+        if connect_params.debug:
+            if knp: knp.close()
+            raise
+        else:
+            sys.stderr.write("Error: " + str(ex) + "\n")
+    finally:
+        if knp: knp.close()
+
+if __name__ == "__main__":
+    opts = None
+    args = None
+
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "DESh:p:")
+    except getopt.GetoptError, err:
+        sys.stderr.write(str(err) + "\n")
+        usage()
+        sys.exit(1)
+
+    connect_params = ConnectParams()
+    connect_params.working_mode = 0 # 1 = Encryption keys, 2 = Signature keys
+
+    for o, a in opts:
+        if o == "-E":
+            connect_params.working_mode = 1
+        elif o == "-S":
+            connect_params.working_mode = 2
+        elif o == "-h":
+            connect_params.hostname = a
+        elif o == "-p":
+            connect_params.port = int(a)
+        elif o == "-D":
+            connect_params.debug = True
+
+    # Set some sensible default of nothing was passed as
+    # command line argument.
+    if not connect_params.hostname:
+        connect_params.hostname = "kos.teambox.co"
+    if not connect_params.port:
+        connect_params.port = 443
+
+    sys.exit(query_all(connect_params, parse_args(connect_params.working_mode, args)))

@@ -1,0 +1,38 @@
+[DEFAULT]
+password = blarg
+
+[kmod]
+kmod = 
+timeout = 1000
+
+[nonmember]
+address = 
+encrypt-password = %(password)s
+
+[member]
+host = 
+port = 
+username = 
+password = 
+full_name = 
+pod_addr = 
+
+[member-message]
+from_name = 
+from_addr = 
+to = 
+cc = 
+subject = OTUT cycle test message (from member)
+nonmember-passwords = %(to)s:%(password)s:1
+
+[nonmember-message]
+from_name = 
+from_addr = 
+to = 
+cc = 
+subject = OTUT cycle test message (from non-member)
+nonmember-passwords =
+
+[report]
+destdir = /tmp/ktests
+title = OTUT cycle, from inside Teambox network

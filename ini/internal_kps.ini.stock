@@ -1,0 +1,22 @@
+[kmod]
+kmod = 
+timeout = 1000
+
+[report]
+title = Internal KPS test report
+
+[kps]
+host = 
+port = 443
+username = 
+password = 
+full_name = 
+pod_addr = 
+
+[message]
+from_name = 
+from_addr = 
+to = 
+cc = 
+subject = Internal KPS test message
+nonmember-passwords =
